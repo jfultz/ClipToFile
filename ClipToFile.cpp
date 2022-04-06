@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <iostream>
 #include <stdlib.h>
+#include <vector>
 
 FILE * openfile(const char * filename, const char * ext)
 {
@@ -44,31 +45,51 @@ void RTFToFile(FILE * file, const char * clipboardData)
 
 void ClipToFile(const char * fileName, int format)
 {
-	FILE * file;
+	FILE * file = stdout;
 	
-	if (!fileName || !fileName[0])
-		file = stdout;
-	else
+	if (fileName && strlen(fileName) > 0)
 		file = fopen(fileName, "wb");
-	if (file == NULL)
-		return;
 	
-	switch(format)
+	if (file == nullptr)
+		return;
+
+	if (format == RegisterClipboardFormat("Rich Text Format"))
 	{
-		default:
-			if (format == RegisterClipboardFormat("Rich Text Format"))
-			{
-				std::cout << "Writing: \"Rich Text Format\"\n";
-				RTFToFile(file, (const char *) GetClipboardData(format));
-			}
-			else
-			{
-				HANDLE handle = GetClipboardData(format);
-				void * data = GlobalLock(handle);
-				unsigned long size = GlobalSize(handle);
-				fwrite(data, size, 1, file);
-			}
+		std::cout << "Writing: \"Rich Text Format\"\n";
+		RTFToFile(file, (const char*)GetClipboardData(format));
 	}
+	else if (format == CF_UNICODETEXT && file == stdout && GetACP() == CP_UTF8)
+	{
+		UINT currentConsoleOutputCP = GetConsoleOutputCP();
+		if (GetACP() == CP_UTF8 && currentConsoleOutputCP != CP_UTF8)
+			SetConsoleOutputCP(CP_UTF8);
+
+		HANDLE handle = GetClipboardData(format);
+		if (wchar_t* data = reinterpret_cast<wchar_t*>(GlobalLock(handle)))
+		{
+			unsigned long size = GlobalSize(handle);
+			if (int length = WideCharToMultiByte(CP_UTF8, 0, data, size / sizeof(wchar_t), nullptr, 0, nullptr, nullptr))
+			{
+				std::vector<char> utf8Chars;
+				utf8Chars.resize(length);
+				WideCharToMultiByte(CP_UTF8, 0, data, size / sizeof(wchar_t), utf8Chars.data(), length, nullptr, nullptr);
+				fwrite(utf8Chars.data(), 1, utf8Chars.size(), file);
+			}
+			GlobalUnlock(handle);
+		}
+
+		if (GetConsoleOutputCP() != currentConsoleOutputCP)
+			SetConsoleOutputCP(currentConsoleOutputCP);
+	}
+	else
+	{
+		HANDLE handle = GetClipboardData(format);
+		void* data = GlobalLock(handle);
+		unsigned long size = GlobalSize(handle);
+		fwrite(data, size, 1, file);
+		GlobalUnlock(handle);
+	}
+
 	if (file != stdout)
 		fclose(file);
 }
